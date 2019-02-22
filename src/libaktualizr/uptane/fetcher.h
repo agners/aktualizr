@@ -18,6 +18,72 @@ constexpr int64_t kMaxImagesTargetsSize = 1024 * 1024;
 
 using FetcherProgressCb = std::function<void(const Uptane::Target&, const std::string&, unsigned int)>;
 
+///
+/// Provides a thread-safe way to pause and terminate task execution.
+/// A task must call canContinue() method to check the current state.
+///
+class FlowControlToken {
+ public:
+  ///
+  /// Called by the controlling thread to request the task to pause or resume.
+  /// Has no effect if the task was aborted.
+  /// @return `true` if the state was changed, `false` otherwise.
+  ///
+  bool setPause(bool set_paused) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (set_paused && state_ == State::Running) {
+        state_ = State::Paused;
+      } else if (!set_paused && state_ == State::Paused) {
+        state_ = State::Running;
+      } else {
+        return false;
+      }
+    }
+    cv_.notify_all();
+    return true;
+  }
+
+  ///
+  /// Called by the controlling thread to request the task to abort.
+  /// @return `false` if the task was already aborted, `true` otherwise.
+  ///
+  bool setAbort() {
+    {
+      std::lock_guard<std::mutex> g(mutex_);
+      if (state_ == State::Aborted) {
+        return false;
+      }
+      state_ = State::Aborted;
+    }
+    cv_.notify_all();
+    return true;
+  }
+
+  ///
+  /// Called by the controlled thread to query the currently requested state.
+  /// Sleeps if the state is `Paused` and `blocking == true`.
+  /// @return `true` for `Running` state, `false` for `Aborted`,
+  /// and also `false` for the `Paused` state, if the call is non-blocking.
+  ///
+  bool canContinue(bool blocking = true) {
+    std::unique_lock<std::mutex> lk(mutex_);
+    if (blocking) {
+      cv_.wait(lk, [this] { return state_ != State::Paused; });
+    }
+    return state_ == State::Running;
+  }
+
+ private:
+  enum class State {
+    Running,  // transitions: ->Paused, ->Aborted
+    Paused,   // transitions: ->Running, ->Aborted
+    Aborted   // transitions: none
+  } state_{State::Running};
+  std::mutex mutex_;
+  std::condition_variable cv_;
+};
+
 class Fetcher {
  public:
   Fetcher(const Config& config_in, std::shared_ptr<INvStorage> storage_in, std::shared_ptr<HttpInterface> http_in,
@@ -32,39 +98,22 @@ class Fetcher {
     return fetchRole(result, maxsize, repo, role, Version());
   }
   void restoreHasherState(MultiPartHasher& hasher, StorageTargetRHandle* data);
-  bool isPaused() {
-    std::lock_guard<std::mutex> guard(mutex_);
-    return pause_;
-  }
-  void checkPause();
 
-  enum class PauseRet {
-    /* Download was paused successfully. */
-    kPaused = 0,
-    /* Download was resumed successfully. */
-    kResumed,
-    /* Download was already paused, so there is nothing to do. */
-    kAlreadyPaused,
-    /* Download was not paused, so there is nothing to do. */
-    kNotPaused,
-  };
-  PauseRet setPause(bool pause);
+  bool setPause(bool pause) { return token.setPause(pause); }
 
  private:
   std::shared_ptr<HttpInterface> http;
   std::shared_ptr<INvStorage> storage;
   const Config& config;
-  bool pause_{false};
-  std::mutex mutex_;
-  std::condition_variable cv_;
   FetcherProgressCb progress_cb;
+  FlowControlToken token;
 };
 
 struct DownloadMetaStruct {
-  DownloadMetaStruct(Target target_in, FetcherProgressCb progress_cb_in)
+  DownloadMetaStruct(Target target_in, FetcherProgressCb progress_cb_in, FlowControlToken* token_in)
       : hash_type{target_in.hashes()[0].type()},
         target{std::move(target_in)},
-        fetcher{nullptr},
+        token{token_in},
         progress_cb{std::move(progress_cb_in)} {}
   uint64_t downloaded_length{0};
   unsigned int last_progress{0};
@@ -81,7 +130,7 @@ struct DownloadMetaStruct {
     }
   }
   Target target;
-  Fetcher* fetcher;
+  FlowControlToken* token;
   FetcherProgressCb progress_cb;
 
  private:
