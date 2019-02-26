@@ -11,7 +11,7 @@
 #include "crypto/keymanager.h"
 #include "packagemanagerconfig.h"
 #include "packagemanagerinterface.h"
-#include "uptane/fetcher.h"
+#include "utilities/apiqueue.h"
 #include "utilities/types.h"
 
 const char remote[] = "aktualizr-remote";
@@ -26,7 +26,9 @@ using GObjectUniquePtr = std::unique_ptr<T, GObjectFinalizer<T>>;
 using OstreeProgressCb = std::function<void(const Uptane::Target &, const std::string &, unsigned int)>;
 
 struct PullMetaStruct {
-  PullMetaStruct(Uptane::Target target_in, Uptane::FlowControlToken *token_in, GCancellable *cancellable_in,
+  PullMetaStruct(Uptane::Target target_in,
+                 const Api::FlowControlToken *token_in,
+                 GCancellable *cancellable_in,
                  OstreeProgressCb progress_cb_in)
       : target{std::move(target_in)},
         percent_complete{0},
@@ -35,7 +37,7 @@ struct PullMetaStruct {
         progress_cb{std::move(progress_cb_in)} {}
   Uptane::Target target;
   unsigned int percent_complete;
-  Uptane::FlowControlToken *token;
+  const Api::FlowControlToken *token;
   GObjectUniquePtr<GCancellable> cancellable;
   OstreeProgressCb progress_cb;
 };
@@ -56,9 +58,11 @@ class OstreeManager : public PackageManagerInterface {
   static GObjectUniquePtr<OstreeSysroot> LoadSysroot(const boost::filesystem::path &path);
   static GObjectUniquePtr<OstreeRepo> LoadRepo(OstreeSysroot *sysroot, GError **error);
   static bool addRemote(OstreeRepo *repo, const std::string &url, const KeyManager &keys);
-  static data::InstallationResult pull(const boost::filesystem::path &sysroot_path, const std::string &ostree_server,
-                                       const KeyManager &keys, const Uptane::Target &target,
-                                       Uptane::FlowControlToken *token = nullptr,
+  static data::InstallationResult pull(const boost::filesystem::path &sysroot_path,
+                                       const std::string &ostree_server,
+                                       const KeyManager &keys,
+                                       const Uptane::Target &target,
+                                       const Api::FlowControlToken *token = nullptr,
                                        OstreeProgressCb progress_cb = nullptr);
 
  private:

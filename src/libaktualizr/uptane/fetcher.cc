@@ -68,7 +68,8 @@ void Fetcher::restoreHasherState(MultiPartHasher& hasher, StorageTargetRHandle* 
   } while (data_len != 0);
 }
 
-bool Fetcher::fetchVerifyTarget(const Target& target) {
+bool Fetcher::fetchVerifyTarget(const Target &target,
+                                const Api::FlowControlToken *token) {
   bool result = false;
   try {
     if (!target.IsOstree()) {
@@ -80,7 +81,7 @@ bool Fetcher::fetchVerifyTarget(const Target& target) {
         LOG_INFO << "Image already downloaded skipping download";
         return true;
       }
-      DownloadMetaStruct ds(target, progress_cb, &token);
+      DownloadMetaStruct ds(target, progress_cb, token);
       if (target_exists) {
         ds.downloaded_length = target_exists->first;
         auto target_handle = storage->openTargetFile(target);
@@ -98,7 +99,7 @@ bool Fetcher::fetchVerifyTarget(const Target& target) {
           break;
         }
         ds.fhandle.reset();
-        if (!token.canContinue()) {
+        if (!token->canContinue()) {
           break;
         }
         ds.fhandle = storage->openTargetFile(target)->toWriteHandle();
@@ -121,7 +122,7 @@ bool Fetcher::fetchVerifyTarget(const Target& target) {
       KeyManager keys(storage, config.keymanagerConfig());
       keys.loadKeys();
       data::InstallationResult install_res =
-          OstreeManager::pull(config.pacman.sysroot, config.pacman.ostree_server, keys, target, &token, progress_cb);
+          OstreeManager::pull(config.pacman.sysroot, config.pacman.ostree_server, keys, target, token, progress_cb);
       result = install_res.success;
 #else
       LOG_ERROR << "Could not pull OSTree target. Aktualizr was built without OSTree support!";

@@ -45,7 +45,7 @@ void resume(const Uptane::Target& target) {
   Uptane::Fetcher f(config, storage, http, progress_cb);
 
   resumed = true;
-  bool res = f.fetchVerifyTarget(target);
+  bool res = f.fetchVerifyTarget(target, nullptr);
 
   EXPECT_TRUE(res);
 }
@@ -59,7 +59,7 @@ void pause_and_die(const Uptane::Target& target) {
   auto result = download_promise.get_future();
 
   std::thread([&f, &target, &download_promise]() {
-    bool res = f.fetchVerifyTarget(target);
+    bool res = f.fetchVerifyTarget(target, nullptr);
     download_promise.set_value(res);
   })
       .detach();

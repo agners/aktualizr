@@ -62,8 +62,10 @@ static void aktualizr_progress_cb(OstreeAsyncProgress *progress, gpointer data) 
 }
 
 data::InstallationResult OstreeManager::pull(const boost::filesystem::path &sysroot_path,
-                                             const std::string &ostree_server, const KeyManager &keys,
-                                             const Uptane::Target &target, Uptane::FlowControlToken *token,
+                                             const std::string &ostree_server,
+                                             const KeyManager &keys,
+                                             const Uptane::Target &target,
+                                             const Api::FlowControlToken *token,
                                              OstreeProgressCb progress_cb) {
   std::string refhash = target.sha256Hash();
   const char *const commit_ids[] = {refhash.c_str()};

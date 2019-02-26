@@ -44,26 +44,18 @@ void Aktualizr::systemSetup() {
 
 void Aktualizr::Initialize() {
   uptane_client_->initialize();
-  api_thread_ = std::thread([&]() {
-    while (!shutdown_) {
-      auto task = api_queue_.dequeue();
-      if (shutdown_) {
-        return;
-      }
-      task();
-    }
-  });
+  api_queue_.run();
 }
 
-void Aktualizr::UptaneCycle() {
+bool Aktualizr::UptaneCycle() {
   result::UpdateCheck update_result = CheckUpdates().get();
   if (update_result.updates.size() == 0) {
-    return;
+    return true;
   }
 
   result::Download download_result = Download(update_result.updates).get();
   if (download_result.status != result::DownloadStatus::kSuccess || download_result.updates.size() == 0) {
-    return;
+    return true;
   }
 
   uptane_client_->uptaneInstall(download_result.updates);
@@ -72,17 +64,18 @@ void Aktualizr::UptaneCycle() {
     // If there are some pending updates then effectively either reboot (ostree) or aktualizr restart (fake pack mngr)
     // is required to apply the update(s)
     LOG_INFO << "About to exit aktualizr so the pending updates can be applied after reboot";
-    Shutdown();
+    return false;
   }
+  return true;
 }
 
 std::future<void> Aktualizr::RunForever() {
   std::future<void> future = std::async(std::launch::async, [&]() {
     SendDeviceData().get();
-    while (!shutdown_) {
-      UptaneCycle();
+    while (UptaneCycle()) {
       std::this_thread::sleep_for(std::chrono::seconds(config_.uptane.polling_sec));
     }
+    Abort();
     uptane_client_->completeInstall();
   });
   return future;
@@ -92,11 +85,8 @@ void Aktualizr::AddSecondary(const std::shared_ptr<Uptane::SecondaryInterface> &
   uptane_client_->addNewSecondary(secondary);
 }
 
-void Aktualizr::Shutdown() {
-  if (!shutdown_) {
-    shutdown_ = true;
-    api_queue_.shutDown();
-  }
+void Aktualizr::Abort() {
+  api_queue_.abort();
 }
 
 std::future<result::CampaignCheck> Aktualizr::CampaignCheck() {
@@ -150,23 +140,13 @@ std::future<result::Install> Aktualizr::Install(const std::vector<Uptane::Target
 }
 
 result::Pause Aktualizr::Pause() {
-  if (api_queue_.pause(true)) {
-    uptane_client_->pauseFetching();
-
-    return {result::PauseStatus::kSuccess};
-  }
-
-  return {result::PauseStatus::kAlreadyPaused};
+  return api_queue_.pause(true) ?
+         result::PauseStatus::kSuccess : result::PauseStatus::kAlreadyPaused;
 }
 
 result::Pause Aktualizr::Resume() {
-  if (api_queue_.pause(false)) {
-    uptane_client_->resumeFetching();
-
-    return {result::PauseStatus::kSuccess};
-  }
-
-  return {result::PauseStatus::kAlreadyRunning};
+  return api_queue_.pause(false) ?
+         result::PauseStatus::kSuccess : result::PauseStatus::kAlreadyRunning;
 }
 
 boost::signals2::connection Aktualizr::SetSignalHandler(std::function<void(shared_ptr<event::BaseEvent>)> &handler) {

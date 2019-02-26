@@ -67,7 +67,7 @@ void test_pause(const Uptane::Target& target) {
 
   do_pause = false;
   std::thread([&f, &target, &download_promise]() {
-    bool res = f.fetchVerifyTarget(target);
+    bool res = f.fetchVerifyTarget(target, nullptr);
     download_promise.set_value(res);
   })
       .detach();
